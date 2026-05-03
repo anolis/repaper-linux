@@ -100,6 +100,14 @@ python3 ./decode_stream.py < trace.log
 The live stream observed so far includes `0x04` packets with a 9-byte payload
 and `0x18` packets with a 14-byte payload, depending on the subscription path.
 
+Confirmed `0x04` packet syntax from `libISKN_API.so.1.0.0` disassembly:
+
+```text
+b3 a5 e1 04 <x:i16> <y:i16> <rot_x:i16> <rot_y:i16> <touch:u8> <crc16-le>
+```
+
+The vendor API multiplies each signed 16-bit coordinate/vector field by `0.01`.
+
 ## Current status
 
 - Kernel module: claims `2c87:0001` and fixes tablet input properties.

@@ -16,6 +16,19 @@ import struct
 import sys
 
 SIGNATURE = bytes([0xb3, 0xa5, 0xe1])
+VENDOR_SCALE = 0.01
+
+PACKET_NAMES = {
+    0x01: 'status',
+    0x02: 'description',
+    0x04: 'pen2d',
+    0x09: 'disk-status',
+    0x0a: 'file-descriptor',
+    0x0f: 'unknown-0f',
+    0x13: 'unknown-13',
+    0x14: 'device-name',
+    0x18: 'raw-pen3d?',
+}
 
 
 def crc16_ccitt(data):
@@ -29,6 +42,22 @@ def crc16_ccitt(data):
 
 def bytes_from_text(text):
     return bytes(int(match, 16) for match in re.findall(r'\b[0-9a-fA-F]{2}\b', text))
+
+
+def scaled(value):
+    return value * VENDOR_SCALE
+
+
+def format_fields(fields):
+    return ' '.join(f'{name}={value}' for name, value in fields)
+
+
+def format_scaled_fields(fields):
+    return ' '.join(f'{name}={scaled(value):.2f}' for name, value in fields)
+
+
+def unpack_fields(fmt, names, payload):
+    return dict(zip(names, struct.unpack(fmt, payload)))
 
 
 def iter_frames(data):
@@ -72,7 +101,9 @@ def describe_frame(frame, index):
     actual_crc = crc16_ccitt(payload)
     crc_state = 'ok' if expected_crc == actual_crc else f'bad:{actual_crc:04x}'
 
-    print(f'{index:04d} type=0x{packet_type:02x} payload={len(payload)} crc={crc_state}')
+    packet_name = PACKET_NAMES.get(packet_type, 'unknown')
+    print(f'{index:04d} type=0x{packet_type:02x} {packet_name} '
+          f'payload={len(payload)} crc={crc_state}')
     print(f'     raw={payload.hex(" ")}')
 
     words_payload = payload[:-1] if len(payload) % 2 == 1 else payload
@@ -83,14 +114,38 @@ def describe_frame(frame, index):
         print('     s16=' + ' '.join(f'{value:5d}' for value in signed))
 
     if packet_type == 0x04 and len(payload) == 9:
-        a_raw, b_raw, c_raw, d_raw, state = struct.unpack('<hhhhB', payload)
-        print(f'     pen2d? a={a_raw} b={b_raw} c={c_raw} d={d_raw} state={state}')
+        fields = unpack_fields('<hhhhB', ('x', 'y', 'rot_x', 'rot_y', 'state'),
+                               payload)
+        vector_fields = (
+            ('x', fields['x']),
+            ('y', fields['y']),
+            ('rot_x', fields['rot_x']),
+            ('rot_y', fields['rot_y']),
+        )
+        print(f'     pen2d raw {format_fields((*vector_fields, ("state", fields["state"])))}')
+        print(f'     pen2d api {format_scaled_fields(vector_fields)} '
+              f'touch={fields["state"] != 0}')
 
     if packet_type == 0x18 and len(payload) == 14:
-        x_raw, y_raw, z_raw, t_raw, a_raw, b_raw, pressure = struct.unpack('<hhhhhhH',
-                                                                           payload)
-        print(f'     pen? x={x_raw} y={y_raw} z={z_raw} t={t_raw} '
-              f'a={a_raw} b={b_raw} pressure={pressure}')
+        fields = unpack_fields(
+            '<hhhhhhBB',
+            ('x', 'y', 'z', 'z_paper', 'rot_x', 'rot_y', 'touch', 'extra'),
+            payload,
+        )
+        vector_fields = (
+            ('x', fields['x']),
+            ('y', fields['y']),
+            ('z', fields['z']),
+            ('z_paper', fields['z_paper']),
+            ('rot_x', fields['rot_x']),
+            ('rot_y', fields['rot_y']),
+        )
+        print(
+            f'     pen3d? raw '
+            f'{format_fields((*vector_fields, ("touch", fields["touch"]), ("extra", fields["extra"])))}'
+        )
+        print(f'     pen3d? api {format_scaled_fields(vector_fields)} '
+              f'touch={fields["touch"] != 0}')
 
 
 def main():
