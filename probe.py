@@ -8,8 +8,10 @@ device sends back.  Run with sudo.
 """
 
 import argparse
+import fcntl
 import os
 import select
+import struct
 import sys
 import termios
 import time
@@ -64,6 +66,14 @@ def find_serial():
 
     return None
 
+
+def set_modem_lines(fd):
+    lines = struct.unpack('I', fcntl.ioctl(fd, termios.TIOCMGET,
+                                          struct.pack('I', 0)))[0]
+    lines |= termios.TIOCM_DTR | termios.TIOCM_RTS
+    fcntl.ioctl(fd, termios.TIOCMSET, struct.pack('I', lines))
+
+
 def hexdump(data, label=''):
     if label:
         print(f'  [{label}]', end=' ')
@@ -81,7 +91,7 @@ def crc16_ccitt(data):
 
 def iskn_packet(block_type, payload):
     body = bytes([block_type]) + bytes(payload)
-    crc = crc16_ccitt(body)
+    crc = crc16_ccitt(payload)
     return bytes([0xb3, 0xa5, 0xe1]) + body + crc.to_bytes(2, 'little')
 
 
@@ -157,6 +167,7 @@ if serial:
         attrs[6][termios.VMIN] = 0
         attrs[6][termios.VTIME] = 1
         termios.tcsetattr(ser_fd, termios.TCSANOW, attrs)
+        set_modem_lines(ser_fd)
     except OSError as e:
         print(f'Cannot open {serial}: {e}')
         ser_fd = None
@@ -207,6 +218,7 @@ if ser_fd is not None:
     #   request:   b3 a5 e1 34 <request-id> <crc16-le>
     #   subscribe: b3 a5 e1 33 <auto-id-le16> <crc16-le>
     request_ids = [
+        (0x00, 'request-0'),
         (0x01, 'request-1'),
         (0x02, 'request-2'),
         (0x03, 'request-3'),
@@ -214,6 +226,7 @@ if ser_fd is not None:
         (0x05, 'request-5'),
     ]
     subscribe_ids = [
+        (0x0000, 'subscribe-0'),
         (0x0001, 'subscribe-1'),
         (0x0002, 'subscribe-2'),
         (0x0003, 'subscribe-3'),

@@ -70,12 +70,47 @@ Move the pen and press on the surface while it listens. The output should show
 `EV_ABS` events such as `ABS_X`, `ABS_Y`, and `ABS_PRESSURE`, plus `EV_KEY`
 tool/touch events.
 
+## Trace the vendor library
+
+If the Python probes are silent, build the vendor-library harness and syscall
+tracer:
+
+```sh
+make tools
+```
+
+Run the harness under the tracer:
+
+```sh
+sudo env LD_PRELOAD="$PWD/trace_serial.so" ./iskn_harness 32
+```
+
+The tracer prints serial `open`, `ioctl`, `write`, and `read` activity. This is
+useful for capturing the exact packets sent by `libISKN_API.so.1.0.0` without
+vendor headers.
+
+Captured trace or probe output can be piped into the decoder while the packet
+layout is being mapped:
+
+```sh
+sudo env LD_PRELOAD="$PWD/trace_serial.so" ./iskn_harness 32 2>&1 | tee trace.log
+python3 ./decode_stream.py < trace.log
+```
+
+The live stream observed so far includes `0x04` packets with a 9-byte payload
+and `0x18` packets with a 14-byte payload, depending on the subscription path.
+
 ## Current status
 
 - Kernel module: claims `2c87:0001` and fixes tablet input properties.
 - Probe tool: listens for raw HID/serial traffic and tries a few exploratory
-  output reports.
+  output reports. Its ISKN serial packets use the vendor framing and payload
+  CRC format.
 - Evdev probe: verifies whether Linux input events are being emitted for the
   tablet surface.
+- Vendor harness: calls `libISKN_API.so.1.0.0` directly and can be run under
+  `trace_serial.so` to capture the real serial protocol.
+- Stream decoder: extracts framed serial packets and prints raw 16-bit fields
+  while the pen report layout is being mapped.
 - Vendor library: `libISKN_API.so.1.0.0` is present for possible future
   reverse-engineering, but the kernel module does not use it.
