@@ -1,0 +1,1 @@
+cmd_/home/anolis/repaper_drv/Module.symvers :=  sed 's/ko$$/o/'  /home/anolis/repaper_drv/modules.order | scripts/mod/modpost -m      -o /home/anolis/repaper_drv/Module.symvers -n -e -i Module.symvers -T - 
