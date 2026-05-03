@@ -97,6 +97,13 @@ sudo env LD_PRELOAD="$PWD/trace_serial.so" ./iskn_harness 32 2>&1 | tee trace.lo
 python3 ./decode_stream.py < trace.log
 ```
 
+For calibration captures, use the compact summary output:
+
+```sh
+sudo ./probe.py --timeout 20 2>&1 | tee calibration.log
+python3 ./decode_stream.py --summary < calibration.log
+```
+
 The live stream observed so far includes `0x04` packets with a 9-byte payload
 and `0x18` packets with a 14-byte payload, depending on the subscription path.
 

@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+
+# Local probe/trace captures.
+probe.log
+trace.log
+calibration.log
+calibration.decoded
