@@ -102,7 +102,29 @@ For calibration captures, use the compact summary output:
 ```sh
 sudo ./probe.py --timeout 20 2>&1 | tee calibration.log
 python3 ./decode_stream.py --summary < calibration.log
+python3 ./decode_stream.py --bounds < calibration.log
+python3 ./decode_stream.py --bounds calibration-*.log
 ```
+
+## Test in GIMP with uinput
+
+`repaper_uinput.py` exposes the decoded serial stream as a virtual absolute
+pen tablet. Load the `uinput` kernel module if needed, then run:
+
+```sh
+sudo modprobe uinput
+sudo ./repaper_uinput.py
+```
+
+For landscape use:
+
+```sh
+sudo ./repaper_uinput.py --orientation landscape
+sudo ./repaper_uinput.py --orientation landscape-ccw
+```
+
+In GIMP, open `Edit` -> `Input Devices`, select `ISKN Repaper Virtual Tablet`,
+and set the mode to `Screen`.
 
 The live stream observed so far includes `0x04` packets with a 9-byte payload
 and `0x18` packets with a 14-byte payload, depending on the subscription path.

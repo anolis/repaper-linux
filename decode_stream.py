@@ -190,7 +190,7 @@ def format_range(values):
     )
 
 
-def summarize_pen2d(frames):
+def collect_pen2d_stats(frames):
     samples = []
     bad_crc = 0
     type_counts = {}
@@ -223,10 +223,22 @@ def summarize_pen2d(frames):
             **fields,
         })
 
+    return {
+        'bad_crc': bad_crc,
+        'samples': samples,
+        'transitions': transitions,
+        'type_counts': type_counts,
+    }
+
+
+def summarize_pen2d(frames):
+    stats = collect_pen2d_stats(frames)
+    samples = stats['samples']
     names = ', '.join(
-        f'0x{pkt_type:02x}:{count}' for pkt_type, count in sorted(type_counts.items())
+        f'0x{pkt_type:02x}:{count}'
+        for pkt_type, count in sorted(stats['type_counts'].items())
     )
-    print(f'frames total={len(frames)} types={names} bad_crc={bad_crc}')
+    print(f'frames total={len(frames)} types={names} bad_crc={stats["bad_crc"]}')
 
     if not samples:
         print('pen2d frames=0')
@@ -242,25 +254,79 @@ def summarize_pen2d(frames):
         print(f'{name:5s} {format_range([sample[name] for sample in samples])}')
 
     print('touch transitions:')
-    if transitions:
-        for index, before, after in transitions:
+    if stats['transitions']:
+        for index, before, after in stats['transitions']:
             print(f'  {index:04d}: {before} -> {after}')
     else:
         print('  none')
+
+
+def print_bounds(frames):
+    stats = collect_pen2d_stats(frames)
+    samples = stats['samples']
+    if not samples:
+        print('No pen2d frames found.', file=sys.stderr)
+        return 1
+
+    bounds = {
+        name: (min(sample[name] for sample in samples),
+               max(sample[name] for sample in samples))
+        for name in ('x', 'y', 'rot_x', 'rot_y')
+    }
+    touch_count = sum(1 for sample in samples if sample['touch'])
+
+    print('# ISKN Repaper pen2d calibration bounds')
+    print(f'# frames={len(frames)} pen2d_frames={len(samples)} bad_crc={stats["bad_crc"]}')
+    print(f'# hover_frames={len(samples) - touch_count} touch_frames={touch_count}')
+    for name, (low, high) in bounds.items():
+        upper_name = name.upper()
+        print(f'REPAPER_{upper_name}_MIN={low}')
+        print(f'REPAPER_{upper_name}_MAX={high}')
+    print(f'REPAPER_TOUCH_STATES={",".join(str(state) for state in sorted({s["state"] for s in samples}))}')
+    return 0
+
+
+def read_input(paths):
+    if not paths:
+        return bytes_from_text(sys.stdin.read())
+
+    chunks = []
+    for path in paths:
+        try:
+            with open(path, 'r', encoding='utf-8', errors='replace') as handle:
+                chunks.append(bytes_from_text(handle.read()))
+        except OSError as err:
+            print(f'{path}: {err}', file=sys.stderr)
+            return None
+    return b''.join(chunks)
 
 
 def main():
     parser = argparse.ArgumentParser(
         description='Decode ISKN serial stream packets from hex text.',
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        '--bounds',
+        action='store_true',
+        help='print reusable pen2d min/max calibration values',
+    )
+    mode.add_argument(
         '--summary',
         action='store_true',
         help='print compact pen2d ranges and touch transitions instead of every frame',
     )
+    parser.add_argument(
+        'paths',
+        nargs='*',
+        help='optional trace/probe log files; stdin is used when omitted',
+    )
     args = parser.parse_args()
 
-    data = bytes_from_text(sys.stdin.read())
+    data = read_input(args.paths)
+    if data is None:
+        return 1
+
     frames = list(iter_frames(data))
     if not frames:
         print(f'No ISKN frames found in {len(data)} parsed hex bytes.', file=sys.stderr)
@@ -270,6 +336,9 @@ def main():
     if args.summary:
         summarize_pen2d(frames)
         return 0
+
+    if args.bounds:
+        return print_bounds(frames)
 
     for index, frame in enumerate(frames, start=1):
         describe_frame(frame, index)

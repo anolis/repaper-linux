@@ -20,3 +20,4 @@ trace_serial.so: trace_serial.c
 clean:
 	$(MAKE) -C $(KDIR) M=$(PWD) clean
 	rm -f iskn_harness trace_serial.so
+	rm -rf __pycache__
