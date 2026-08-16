@@ -22,7 +22,10 @@ VENDOR_SCALE = 0.01
 PACKET_NAMES = {
     0x01: 'status',
     0x02: 'description',
+    0x03: 'unknown-03',
     0x04: 'pen2d',
+    0x05: 'pen3d',
+    0x06: 'raw3d',
     0x09: 'disk-status',
     0x0a: 'file-descriptor',
     0x0f: 'unknown-0f',
@@ -31,7 +34,40 @@ PACKET_NAMES = {
     0x18: 'raw-pen3d?',
 }
 
-HEX_BYTE_RE = re.compile(r'(?<![0-9a-fA-F])(?:0x)?([0-9a-fA-F]{2})(?![0-9a-fA-F])')
+# Frame sizes include signature, block type and CRC.  The streaming blocks
+# (0x04/0x05/0x06) were measured from signature spacing and confirmed by CRC;
+# the rest come from the vendor library's block table.
+FRAME_SIZES = {
+    0x01: 8,
+    0x02: 42,
+    0x04: 15,
+    0x05: 19,
+    0x06: 16,
+    0x09: 13,
+    0x0a: 19,
+    0x0f: 18,
+    0x13: 42,
+    0x14: 74,
+    0x18: 20,
+}
+
+# The subscribe payload (block 0x33) is a 16-bit bitmask, not a stream id:
+# bit N enables the auto-block whose type is AUTO_BLOCK_BASE + N.
+AUTO_BLOCK_BASE = 0x02
+
+
+def auto_block_mask(*block_types):
+    """Bitmask that subscribes to exactly the given auto-block types."""
+    mask = 0
+    for block_type in block_types:
+        mask |= 1 << (block_type - AUTO_BLOCK_BASE)
+    return mask
+
+HEX_TOKEN_RE = re.compile(r'^(?:0x)?([0-9a-fA-F]{2})$')
+
+# A real dump always shows several bytes back to back, so require a run of at
+# least this many before believing them.
+MIN_HEX_RUN = 2
 
 
 def crc16_ccitt(data):
@@ -44,7 +80,31 @@ def crc16_ccitt(data):
 
 
 def bytes_from_text(text):
-    return bytes(int(match, 16) for match in HEX_BYTE_RE.findall(text))
+    """Scrape hex byte dumps out of probe/trace log text.
+
+    Log lines interleave dumps with values that merely look like hex, e.g.
+    ``[trace] read 15: b3 a5 e1 04`` where ``15`` is a byte count, or
+    ``/dev/ttyACM0`` which hides an ``AC``.  Accept only whole tokens that are
+    exactly one hex byte, and only where several appear consecutively.
+    """
+    collected = bytearray()
+
+    def flush(run):
+        if len(run) >= MIN_HEX_RUN:
+            collected.extend(run)
+
+    for line in text.splitlines():
+        run = []
+        for token in line.split():
+            match = HEX_TOKEN_RE.match(token)
+            if match:
+                run.append(int(match.group(1), 16))
+                continue
+            flush(run)
+            run = []
+        flush(run)
+
+    return bytes(collected)
 
 
 def scaled(value):
@@ -85,11 +145,28 @@ def parse_pen2d(payload):
 
 
 def parse_pen3d(payload):
-    if len(payload) != 14:
+    """Block 0x05: pen2d plus a height and a frame counter.
+
+    Field 4 was previously read as a second height ('z_paper').  It is a
+    sequence counter that advances by 2 every frame regardless of the pen,
+    so it is unsigned and must not be scaled as a coordinate.
+    """
+    if len(payload) != 13:
         return None
     return unpack_fields(
-        '<hhhhhhBB',
-        ('x', 'y', 'z', 'z_paper', 'rot_x', 'rot_y', 'touch', 'extra'),
+        '<hhhHhhB',
+        ('x', 'y', 'z', 'seq', 'rot_x', 'rot_y', 'state'),
+        payload,
+    )
+
+
+def parse_raw3d(payload):
+    """Block 0x06: three coordinates plus the orientation vector."""
+    if len(payload) != 10:
+        return None
+    return unpack_fields(
+        '<hhhhh',
+        ('x', 'y', 'z', 'rot_x', 'rot_y'),
         payload,
     )
 
@@ -103,23 +180,7 @@ def iter_frames(data):
         if start + 4 > len(data):
             return
 
-        packet_type = data[start + 3]
-        frame_len = 20 if packet_type == 0x18 else None
-        if packet_type == 0x04:
-            frame_len = 15
-        if frame_len is None:
-            # Known fixed response sizes from the vendor library's block table.
-            sizes = {
-                0x01: 8,
-                0x02: 42,
-                0x09: 13,
-                0x0a: 19,
-                0x0f: 18,
-                0x13: 42,
-                0x14: 74,
-            }
-            frame_len = sizes.get(packet_type)
-
+        frame_len = FRAME_SIZES.get(data[start + 3])
         if frame_len is None or start + frame_len > len(data):
             idx = start + 3
             continue
@@ -160,7 +221,7 @@ def describe_frame(frame, index):
         print(f'     pen2d api {format_scaled_fields(vector_fields)} '
               f'touch={fields["state"] != 0}')
 
-    if pkt_type == 0x18:
+    if pkt_type == 0x05:
         fields = parse_pen3d(payload)
         if fields is None:
             return
@@ -168,16 +229,22 @@ def describe_frame(frame, index):
             ('x', fields['x']),
             ('y', fields['y']),
             ('z', fields['z']),
-            ('z_paper', fields['z_paper']),
-            ('rot_x', fields['rot_x']),
-            ('rot_y', fields['rot_y']),
         )
-        print(
-            f'     pen3d? raw '
-            f'{format_fields((*vector_fields, ("touch", fields["touch"]), ("extra", fields["extra"])))}'
+        print(f'     pen3d raw {format_fields((*vector_fields, ("seq", fields["seq"]), ("rot_x", fields["rot_x"]), ("rot_y", fields["rot_y"]), ("state", fields["state"])))}')
+        print(f'     pen3d api {format_scaled_fields(vector_fields)} '
+              f'touch={fields["state"] != 0}')
+
+    if pkt_type == 0x06:
+        fields = parse_raw3d(payload)
+        if fields is None:
+            return
+        vector_fields = (
+            ('x', fields['x']),
+            ('y', fields['y']),
+            ('z', fields['z']),
         )
-        print(f'     pen3d? api {format_scaled_fields(vector_fields)} '
-              f'touch={fields["touch"] != 0}')
+        print(f'     raw3d raw {format_fields((*vector_fields, ("rot_x", fields["rot_x"]), ("rot_y", fields["rot_y"])))}')
+        print(f'     raw3d api {format_scaled_fields(vector_fields)}')
 
 
 def format_range(values):
