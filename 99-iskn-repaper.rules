@@ -1,0 +1,17 @@
+# ISKN Repaper (2c87:0001) — grant the logged-in user access to the tablet.
+#
+# systemd-logind already applies uaccess to the ttyACM and uinput nodes, so
+# the serial bridge needs no privileges.  The hidraw node is the exception:
+# it stays root-only, which is the only reason the probe tools have needed
+# sudo.  Vendor init goes through HID output report 4, so hidraw matters.
+#
+# Install with:
+#   sudo cp 99-iskn-repaper.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# Then unplug and replug the tablet.
+
+KERNEL=="hidraw*", ATTRS{idVendor}=="2c87", ATTRS{idProduct}=="0001", TAG+="uaccess"
+
+# Belt and braces: some desktops do not apply uaccess to CDC-ACM nodes.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2c87", ATTRS{idProduct}=="0001", TAG+="uaccess", GROUP="dialout", MODE="0660"
