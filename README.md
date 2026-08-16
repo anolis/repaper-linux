@@ -87,6 +87,39 @@ The device is marked `INPUT_PROP_POINTER`, which is correct for an external
 tablet. `INPUT_PROP_DIRECT` means display-integrated (a Cintiq); pass
 `--direct` if you have a reason to want it.
 
+## Drawings stored on the device
+
+The tablet records sessions to internal storage. `repaper_gui.py` is a desktop
+browser for them: it lists what is on the device, previews each drawing,
+exports it, and deletes it.
+
+```sh
+./repaper_gui.py
+```
+
+The same operations are available from the command line:
+
+```sh
+./repaper_files.py --list
+./repaper_files.py --all -o drawings/     # download everything
+./repaper_files.py --svg drawings/*.iskn  # convert to SVG, no tablet needed
+./repaper_files.py --delete 3             # prompts before deleting
+```
+
+Downloads are verified against the size in the file table, so a truncated
+transfer is reported rather than silently written out.
+
+**It is not a USB disk.** The device has one configuration exposing only HID
+and CDC interfaces, with no mass-storage class and no alternate configuration
+to switch into, so the drawings can only come off over the vendor protocol.
+That turns out to be an advantage: the files are structured stroke records
+rather than an opaque blob.
+
+**There is no firmware update path.** The vendor library exposes
+`getFirmwareVersion()` and nothing else — no DFU, flash or bootloader symbols,
+and the outgoing command set is fully enumerated at `0x33`–`0x38`. Do not
+guess at flash commands on hardware with no recovery mode.
+
 ## Protocol reference
 
 All confirmed by measurement against the hardware unless marked otherwise.
@@ -171,6 +204,55 @@ array. Unlike the pen blocks it streams with no pen present.
   The bridge uses this to reject idle noise, which otherwise becomes bogus
   cursor motion.
 
+### Disk operations
+
+```text
+b3 a5 e1 35 <req:u8> <code:u64le> <file_id:u16le> <arg:u32le> <crc16le>
+```
+
+Taken from `BlockDiskOperation` in the vendor library, which writes the block
+type and each field at fixed offsets.
+
+| Request | Meaning | Code |
+| --- | --- | --- |
+| 2 | import — download a file | 0 |
+| 3 | remove — delete a file | `0x688e` |
+| 4 | format — erase everything | `0x688e` |
+
+The device rejects requests 3 and 4 without that confirmation code, and sends
+no acknowledgement for either, so a delete is confirmed by re-reading the file
+table. `repaper_files.py` implements 2 and 3; format is deliberately absent.
+
+A download arrives as a stream of `0x0b` blocks, each a 13-byte header plus up
+to 64 bytes of file content:
+
+```text
+id:u16le  reserved:u8  index:u32le  total:u32le  length:u16le
+```
+
+Everything is little endian. Both counters are genuinely 32-bit — a 43 kB file
+needs 676 chunks, and reading them as 16-bit big endian happens to work only
+while the high bytes are zero, then silently truncates the transfer to a
+quarter of the file. The `length` field matters equally: the last chunk is
+short unless the size divides by 64, and padding it corrupts the result.
+
+### Stored file format
+
+```text
+<signature:3> <version:u8> <record>*
+```
+
+Each record is a block type byte followed by that block's payload, so records
+are **variable length**, not a fixed stride: type `0x03` carries 2 bytes and
+type `0x18` carries 14. Some files open with a `0x03` record and some do not,
+so assuming a fixed stride desynchronises on exactly those that do.
+
+Block `0x18` is the stored pen record. It never appears in the live stream,
+which is why probing the device never revealed it. Its first three signed
+16-bit fields are x, y and the contact height, and the height takes exactly two
+values: `+300` while the tip is on the paper, and negative while lifted.
+Strokes break wherever it goes negative.
+
 ### The same protocol runs over HID
 
 The vendor protocol is available over the HID interface, with no serial
@@ -201,8 +283,8 @@ digitizer report as advertised but unimplemented.
 
 ## Tools
 
-`repaper_uinput.py` is the bridge and the calibration tool. The rest are for
-protocol work:
+`repaper_uinput.py` is the bridge and the calibration tool, `repaper_gui.py`
+and `repaper_files.py` handle stored drawings. The rest are for protocol work:
 
 ```sh
 ./probe.py                 # exploratory HID/serial probing
@@ -231,9 +313,10 @@ python3 ./decode_stream.py < trace.log
 python3 -m unittest discover -p 'test_*.py'
 ```
 
-51 tests covering the checksum, framing and resync, payload layouts, the
-subscribe bitmask, tilt conversion and the proximity test. Pure stdlib, no
-dependencies, and no tablet required.
+81 tests covering the checksum, framing and resync, payload layouts, the
+subscribe bitmask, tilt conversion, the proximity test, disk commands, chunk
+reassembly and the stored file format. Pure stdlib, no dependencies, and no
+tablet required.
 
 ## Kernel module
 
@@ -284,12 +367,16 @@ sudo insmod ./hid-iskn.ko swap_xy=0 invert_y=0
 
 ## Status
 
-* **Protocol** — framing, checksum, request table, subscribe bitmask and
-  all three pen payloads confirmed against hardware.
+* **Protocol** — framing, checksum, request table, subscribe bitmask, all
+  three pen payloads, the disk command set and the stored file format
+  confirmed against hardware.
 * **Bridge** — subscribes correctly, emits position, tilt, hover distance
   and contact, rejects idle noise, reports axis resolution, drops the tool
   out of proximity, and reconnects across unplug.
-* **Kernel module** — vestigial; targets an input node that never fires.
-* **Open questions** — block `0x03`, `0x0f` and `0x13` contents; the exact
-  physical scale of the coordinates; whether the on-device file blocks
-  (`0x09`, `0x0a`) can be read back.
+* **Kernel module** — drives the pen over the vendor HID pipe; replaces the
+  silent digitizer and the mouse node with one pen device.
+* **Stored drawings** — listed, downloaded, verified against the file table,
+  rendered to SVG and deleted, from a GUI or the command line.
+* **Open questions** — contents of blocks `0x03`, `0x0f` and `0x13`; the
+  trailing fields of the `0x18` record beyond position and contact; whether
+  the coordinate scale of 100 units per millimetre is exact.

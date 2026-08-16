@@ -34,22 +34,42 @@ PACKET_NAMES = {
     0x18: 'raw-pen3d?',
 }
 
-# Frame sizes include signature, block type and CRC.  The streaming blocks
-# (0x04/0x05/0x06) were measured from signature spacing and confirmed by CRC;
-# the rest come from the vendor library's block table.
-FRAME_SIZES = {
-    0x01: 8,
-    0x02: 42,
-    0x04: 15,
-    0x05: 19,
-    0x06: 16,
-    0x09: 13,
-    0x0a: 19,
+# Payload sizes for blocks 0x01..0x0d come from the table that
+# BlockManager::InitDataBlockSize() builds in libISKN_API.so.1.0.0, and every
+# one of them matches a frame captured from the hardware.  0x0f, 0x13 and
+# 0x14 are not in that table and were measured directly.
+PAYLOAD_SIZES = {
+    0x01: 2,    # status
+    0x02: 36,   # description
+    0x03: 2,
+    0x04: 9,    # pen2d
+    0x05: 13,   # pen3d
+    0x06: 10,   # raw3d
+    0x07: 13,
+    0x08: 1,
+    0x09: 7,    # disk status
+    0x0a: 13,   # file descriptor
+    0x0b: 77,   # file data chunk
+    0x0c: 9,
+    0x0d: 5,
+    0x18: 14,   # stored-file pen record; never seen in the live stream
+}
+
+# Frame sizes include the signature, block type and CRC.
+FRAME_SIZES = {block: size + 6 for block, size in PAYLOAD_SIZES.items()}
+FRAME_SIZES.update({
     0x0f: 18,
     0x13: 42,
     0x14: 74,
-    0x18: 20,
-}
+})
+
+# Blocks the computer sends to the device.
+BLOCK_SUBSCRIBE = 0x33
+BLOCK_REQUEST = 0x34
+BLOCK_DISK_OPERATION = 0x35
+BLOCK_SET_TIME = 0x36
+BLOCK_SET_PIN = 0x37
+BLOCK_SET_DEVICE_NAME = 0x38
 
 # The subscribe payload (block 0x33) is a 16-bit bitmask, not a stream id:
 # bit N enables the auto-block whose type is AUTO_BLOCK_BASE + N.
