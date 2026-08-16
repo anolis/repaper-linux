@@ -100,6 +100,59 @@ The device is marked `INPUT_PROP_POINTER`, which is correct for an external
 tablet. `INPUT_PROP_DIRECT` means display-integrated (a Cintiq); pass
 `--direct` if you have a reason to want it.
 
+## Using it to draw
+
+On X11 a tablet is an absolute pointer, so it drives the desktop cursor by
+design — a Wacom behaves the same way. Across a multi-monitor desktop that
+makes it unusable: the whole surface stretches over every screen, so a
+centimetre of pen travel crosses a monitor, and the aspect ratio is wrong so
+circles come out as ellipses.
+
+Confine it to one output:
+
+```sh
+./repaper_map.py --list        # show monitors and the surface aspect
+./repaper_map.py DP-5          # map onto one, keeping the aspect ratio
+./repaper_map.py --reset       # back to the whole desktop
+```
+
+The aspect ratio is preserved by default, using the largest correctly
+proportioned rectangle that fits, so shapes keep their proportions. Pass
+`--stretch` to fill the monitor instead. The mapping lasts for the X
+session; put the command in your session startup to keep it.
+
+To check the tablet independently of any application:
+
+```sh
+./repaper_canvas.py
+```
+
+This reads the pen straight from its evdev node, so what it shows is what
+the driver produces with nothing in between. Ticking **Detach from desktop
+cursor** floats the device off the core pointer: the pen stops moving your
+mouse entirely while the canvas keeps drawing, which is what "canvas only"
+means in practice.
+
+### Pressure is binary, and that is the hardware
+
+The pen is a passive magnet with no force sensor, so there is nothing to
+measure. X delivers exactly two pressure values and nothing between them.
+Strokes therefore have constant width with hard starts and stops, which
+feels like drawing with a mouse even though the tablet path is working.
+
+There is no software fix for this. What works instead is driving brush
+dynamics from something the tablet does measure:
+
+* **Krita** — in the brush editor, set Size and Opacity to follow *Drawing
+  Speed* or *Tilt* rather than Pressure.
+* **GIMP** — pick a dynamic based on Velocity or Direction instead of
+  Pressure, and enable the device first under `Edit` → `Input Devices`,
+  setting its Mode to `Screen`. A device left at the default `Disabled` is
+  routed through the core pointer, which really does make it act as a mouse.
+
+Tilt is the more useful of the two here: it varies smoothly and is
+genuinely measured, whereas velocity is inferred.
+
 ## Drawings stored on the device
 
 The tablet records sessions to internal storage. `repaper_gui.py` is a desktop
