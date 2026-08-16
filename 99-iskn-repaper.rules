@@ -13,5 +13,13 @@
 
 KERNEL=="hidraw*", ATTRS{idVendor}=="2c87", ATTRS{idProduct}=="0001", TAG+="uaccess"
 
+# Tag the pad sub-device that hid-iskn registers for the five case buttons.
+# udev's built-in input classifier only recognises a pen from BTN_TOOL_PEN
+# and the absolute axes, so a button-only device is left untagged and
+# libinput ignores it -- the buttons then never reach applications.
+# libwacom's own rules would do this, but only for devices in its database.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="ISKN Repaper Pad", \
+  ENV{ID_INPUT}="1", ENV{ID_INPUT_TABLET_PAD}="1"
+
 # Belt and braces: some desktops do not apply uaccess to CDC-ACM nodes.
 SUBSYSTEM=="tty", ATTRS{idVendor}=="2c87", ATTRS{idProduct}=="0001", TAG+="uaccess", GROUP="dialout", MODE="0660"

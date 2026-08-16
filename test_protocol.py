@@ -322,6 +322,53 @@ class TiltTest(unittest.TestCase):
             self.assertLessEqual(abs(repaper_uinput.tilt_degrees(value)), 90)
 
 
+class ButtonTest(unittest.TestCase):
+    """Block 0x08 carries the five case buttons as one byte.
+
+    Press codes run from BUTTON_PRESS_BASE, and the release code for a
+    button is its press code plus BUTTON_RELEASE_OFFSET.
+    """
+
+    def test_press_codes_map_to_indices(self):
+        for index, code in enumerate(range(0x0a, 0x0f)):
+            self.assertEqual(decode_stream.parse_button(bytes([code])),
+                             (index, True))
+
+    def test_release_codes_map_to_the_same_indices(self):
+        for index, code in enumerate(range(0x0f, 0x14)):
+            self.assertEqual(decode_stream.parse_button(bytes([code])),
+                             (index, False))
+
+    def test_release_is_press_plus_the_offset(self):
+        for index in range(decode_stream.BUTTON_COUNT):
+            press = decode_stream.BUTTON_PRESS_BASE + index
+            release = press + decode_stream.BUTTON_RELEASE_OFFSET
+            self.assertEqual(decode_stream.parse_button(bytes([press])),
+                             (index, True))
+            self.assertEqual(decode_stream.parse_button(bytes([release])),
+                             (index, False))
+
+    def test_rejects_codes_outside_the_range(self):
+        for code in (0x00, 0x09, 0x14, 0xff):
+            self.assertIsNone(decode_stream.parse_button(bytes([code])))
+
+    def test_rejects_a_wrong_length_payload(self):
+        self.assertIsNone(decode_stream.parse_button(b''))
+        self.assertIsNone(decode_stream.parse_button(b'\x0a\x0a'))
+
+    def test_block_size_matches_a_single_byte(self):
+        self.assertEqual(
+            decode_stream.PAYLOAD_SIZES[decode_stream.BUTTON_BLOCK], 1)
+
+    def test_observed_transition_sequence_decodes(self):
+        # Captured while pressing buttons: each press is followed by the
+        # matching release, five apart.
+        observed = [0x0c, 0x11, 0x0e, 0x13, 0x0d, 0x12, 0x0b, 0x10]
+        decoded = [decode_stream.parse_button(bytes([c])) for c in observed]
+        self.assertEqual(decoded, [(2, True), (2, False), (4, True), (4, False),
+                                   (3, True), (3, False), (1, True), (1, False)])
+
+
 class OrientationTest(unittest.TestCase):
 
     class Args:

@@ -26,6 +26,7 @@ PACKET_NAMES = {
     0x04: 'pen2d',
     0x05: 'pen3d',
     0x06: 'raw3d',
+    0x08: 'buttons',
     0x09: 'disk-status',
     0x0a: 'file-descriptor',
     0x0f: 'unknown-0f',
@@ -46,7 +47,7 @@ PAYLOAD_SIZES = {
     0x05: 13,   # pen3d
     0x06: 10,   # raw3d
     0x07: 13,
-    0x08: 1,
+    0x08: 1,    # face buttons
     0x09: 7,    # disk status
     0x0a: 13,   # file descriptor
     0x0b: 77,   # file data chunk
@@ -62,6 +63,30 @@ FRAME_SIZES.update({
     0x13: 42,
     0x14: 74,
 })
+
+# Block 0x08 reports the five face buttons as a single byte: one code per
+# button for press, and the same code plus BUTTON_RELEASE_OFFSET for release.
+BUTTON_BLOCK = 0x08
+BUTTON_COUNT = 5
+BUTTON_PRESS_BASE = 0x0a
+BUTTON_RELEASE_OFFSET = 5
+
+
+def parse_button(payload):
+    """Return (index, pressed) for a 0x08 payload, or None if unrecognised.
+
+    Index is zero-based, so button 1 on the case is index 0.
+    """
+    if len(payload) != 1:
+        return None
+    code = payload[0] - BUTTON_PRESS_BASE
+    pressed = code < BUTTON_RELEASE_OFFSET
+    if not pressed:
+        code -= BUTTON_RELEASE_OFFSET
+    if 0 <= code < BUTTON_COUNT:
+        return code, pressed
+    return None
+
 
 # Blocks the computer sends to the device.
 BLOCK_SUBSCRIBE = 0x33

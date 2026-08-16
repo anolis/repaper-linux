@@ -118,8 +118,64 @@ Confine it to one output:
 
 The aspect ratio is preserved by default, using the largest correctly
 proportioned rectangle that fits, so shapes keep their proportions. Pass
-`--stretch` to fill the monitor instead. The mapping lasts for the X
-session; put the command in your session startup to keep it.
+`--stretch` to fill the monitor instead.
+
+The mapping belongs to an X device that does not live as long as you would
+expect. libinput creates the pen's *tool* device lazily, the first time a
+stylus is detected, and destroys it when the driver reloads or the pen is
+away for a while. Each new device starts with an identity matrix, so a
+mapping applied once quietly lapses and the cursor goes back to roaming.
+Run it with `--watch` to reapply automatically:
+
+```sh
+./repaper_map.py DP-5 --watch
+```
+
+That is the form to put in your session startup.
+
+### Getting the applications to use it
+
+Nothing appears in any application until the pen tool device exists, and it
+only appears once a stylus has been detected. Touch the pen to the tablet
+first, then check:
+
+```sh
+xinput list | grep Repaper
+```
+
+You want a line reading `ISKN Repaper Pen Pen (0) ... [slave pointer]`. The
+plain `ISKN Repaper Pen` entry listed under keyboards is the parent tablet,
+not the tool, and applications do not use it directly.
+
+**GIMP** will not use a device it has not been told about: an unconfigured
+device is routed through the core pointer, which really does make the pen
+behave as a mouse. Open `Edit` -> `Input Devices`, select
+`ISKN Repaper Pen Pen (0)`, set its Mode to `Screen`, and Save.
+
+**Krita** picks up XI2 tablets on its own once the tool device exists.
+
+### The five case buttons
+
+For the buttons to reach applications, two pieces of system configuration
+are needed beyond the driver:
+
+```sh
+sudo cp iskn-repaper.tablet /etc/libwacom/
+sudo cp 99-iskn-repaper.rules /etc/udev/rules.d/
+sudo cp 60-iskn-repaper-pad.conf /etc/X11/xorg.conf.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+The libwacom file stops the Xorg log reporting the tablet as unknown and
+tells desktops its size and button count. The udev rule tags the pad device
+`ID_INPUT_TABLET_PAD`, which udev's built-in classifier does not do for a
+button-only device, so libinput would otherwise ignore it. The Xorg snippet
+adds an `InputClass` matching tablet pads, which the stock
+`40-libinput.conf` does not ship -- without it the pad is added by udev and
+then dropped with no driver assigned. Xorg reads that at server start, so
+log out and back in.
+
+They arrive in block `0x08` as a single byte: one code per button when
 
 To check the tablet independently of any application:
 
@@ -132,6 +188,23 @@ the driver produces with nothing in between. Ticking **Detach from desktop
 cursor** floats the device off the core pointer: the pen stops moving your
 mouse entirely while the canvas keeps drawing, which is what "canvas only"
 means in practice.
+
+### The five case buttons
+
+pressed, and the same code plus 5 when released.
+
+| Button | Press | Release |
+| --- | --- | --- |
+| 1 | `0x0a` | `0x0f` |
+| 2 | `0x0b` | `0x10` |
+| 3 | `0x0c` | `0x11` |
+| 4 | `0x0d` | `0x12` |
+| 5 | `0x0e` | `0x13` |
+
+The driver puts them on a second input device, `ISKN Repaper Pad`, reporting
+`BTN_0` to `BTN_4`. That is how tablet pads are conventionally exposed, and
+it keeps the pen device advertising only what a stylus actually has. Bind
+them to tools or brushes in the application's input settings.
 
 ### Pressure is binary, and that is the hardware
 

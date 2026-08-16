@@ -1,0 +1,47 @@
+# ISKN Repaper / Slate X
+#
+# libwacom description for the tablet, so desktops and drawing applications
+# know its size and how many pad buttons it has.  Without this, the Xorg log
+# reports "tablet 'ISKN Repaper Pen' unknown to libwacom" and the case
+# buttons never reach applications.
+#
+# Install to /etc/libwacom/, which libwacom reads in addition to its own
+# database:
+#
+#   sudo cp iskn-repaper.tablet /etc/libwacom/
+#   libwacom-list-local-devices        # should now list the Repaper
+#
+# The DeviceMatch names are the input devices hid-iskn registers, so they
+# only match when that driver is bound.
+#
+# Button map, buttons numbered as they sit on the case:
+#
+#   *---------------------------------------*
+#   |                                       |
+#   |              TABLET                   |
+#   |                                       |
+#   *---------------------------------------*
+#          A    B    C    D    E
+#
+# Surface is 214.5 x 157.7 mm measured, which is 8.4 x 6.2 inches.
+
+[Device]
+Name=ISKN Repaper
+ModelName=Slate X
+DeviceMatch=usb:2c87:0001:ISKN Repaper Pen;usb:2c87:0001:ISKN Repaper Pad
+Class=Bamboo
+Width=8
+Height=6
+IntegratedIn=
+Layout=
+
+[Features]
+Stylus=true
+Reversible=false
+Touch=false
+Ring=false
+Buttons=5
+
+[Buttons]
+Left=A;B;C;D;E
+EvdevCodes=0x100;0x101;0x102;0x103;0x104

@@ -23,6 +23,7 @@ import os
 import re
 import struct
 import subprocess
+import time
 import sys
 
 DEVICE_NAMES = ('ISKN Repaper Pen', 'ISKN Repaper Virtual Tablet')
@@ -152,6 +153,8 @@ def main():
                         help='fill the monitor, distorting the aspect ratio')
     parser.add_argument('--reset', action='store_true',
                         help='map across the whole desktop again')
+    parser.add_argument('--watch', action='store_true',
+                        help='keep the mapping applied as the device reappears')
     args = parser.parse_args()
 
     if not os.environ.get('DISPLAY'):
@@ -196,8 +199,46 @@ def main():
     print(f'  drawing area: {used_w:.0f}x{used_h:.0f} px of {mon_w}x{mon_h}')
     if not args.stretch and aspect:
         print(f'  aspect preserved at {aspect:.3f}')
-    print('\nThis lasts until the X session ends. To keep it, add the same '
-          'command to your session startup.')
+
+    if not args.watch:
+        print('\nThe mapping belongs to this X device, and the device is '
+              'recreated whenever the driver reloads or the pen returns to '
+              'proximity after being gone. Re-run then, or use --watch.')
+        return 0
+
+    return watch_loop(args, matrix)
+
+
+def watch_loop(args, matrix):
+    """Reapply the mapping whenever X recreates the tool device.
+
+    libinput creates the pen's tool device lazily, the first time a stylus
+    is detected, and destroys it again when the driver reloads.  Each new
+    device starts with an identity matrix, so a mapping applied once
+    silently lapses and the cursor goes back to roaming the whole desktop.
+    """
+    print(f'\nWatching; the mapping is reapplied when the device reappears. '
+          f'Ctrl-C to stop.')
+    known = None
+    try:
+        while True:
+            try:
+                _, device_id = find_device(args.device)
+            except SystemExit:
+                device_id = None
+            if device_id is not None and device_id != known:
+                apply_matrix(device_id, matrix)
+                stamp = time.strftime('%H:%M:%S')
+                print(f'  {stamp}  reapplied to device id {device_id}',
+                      flush=True)
+                known = device_id
+            elif device_id is None and known is not None:
+                print(f'  {time.strftime("%H:%M:%S")}  device gone; waiting',
+                      flush=True)
+                known = None
+            time.sleep(2.0)
+    except KeyboardInterrupt:
+        print('\nstopped')
     return 0
 
 

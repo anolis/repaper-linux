@@ -40,14 +40,27 @@
 
 #define ISKN_BLOCK_SUBSCRIBE		0x33
 #define ISKN_BLOCK_PEN3D		0x05
+#define ISKN_BLOCK_BUTTONS		0x08
 
 /* Bit N of the subscribe mask enables the auto-block of type 0x02 + N. */
 #define ISKN_AUTO_BLOCK_BASE		0x02
 #define ISKN_AUTO_MASK(block)		BIT((block) - ISKN_AUTO_BLOCK_BASE)
+#define ISKN_SUBSCRIPTION		(ISKN_AUTO_MASK(ISKN_BLOCK_PEN3D) | \
+					 ISKN_AUTO_MASK(ISKN_BLOCK_BUTTONS))
 
 #define ISKN_PEN3D_FRAME_LEN		19
 #define ISKN_PEN3D_PAYLOAD_LEN		13
+#define ISKN_BUTTON_FRAME_LEN		7
+#define ISKN_BUTTON_PAYLOAD_LEN		1
 #define ISKN_FRAME_OVERHEAD		6	/* signature + block + crc */
+
+/*
+ * The five case buttons arrive as one byte in block 0x08: a code per button
+ * for press, and the same code plus ISKN_BUTTON_RELEASE_OFFSET for release.
+ */
+#define ISKN_BUTTON_COUNT		5
+#define ISKN_BUTTON_PRESS_BASE		0x0a
+#define ISKN_BUTTON_RELEASE_OFFSET	5
 
 /*
  * rot_x and rot_y are the x/y components of the pen's unit orientation
@@ -135,8 +148,14 @@ static const u8 iskn_signature[3] = { 0xb3, 0xa5, 0xe1 };
 struct iskn_drvdata {
 	struct hid_device *hdev;
 	struct input_dev *input;
+	struct input_dev *pad;
 	struct delayed_work proximity_work;
 	bool in_proximity;
+};
+
+/* Pad buttons are exposed the way tablet drivers conventionally do. */
+static const unsigned short iskn_pad_keys[ISKN_BUTTON_COUNT] = {
+	BTN_0, BTN_1, BTN_2, BTN_3, BTN_4,
 };
 
 /*
@@ -284,6 +303,21 @@ static void iskn_report_pen3d(struct iskn_drvdata *drvdata, const u8 *payload)
 			 msecs_to_jiffies(ISKN_PROXIMITY_MS));
 }
 
+static void iskn_report_button(struct iskn_drvdata *drvdata, u8 code)
+{
+	int index = code - ISKN_BUTTON_PRESS_BASE;
+	bool pressed = index < ISKN_BUTTON_RELEASE_OFFSET;
+
+	if (!pressed)
+		index -= ISKN_BUTTON_RELEASE_OFFSET;
+	if (index < 0 || index >= ISKN_BUTTON_COUNT || !drvdata->pad)
+		return;
+
+	input_report_key(drvdata->pad, iskn_pad_keys[index], pressed);
+	input_sync(drvdata->pad);
+}
+
+
 /*
  * One HID report can carry several frames, and the tail is zero padded.
  * Walk by signature so a partial or unknown block cannot swallow whatever
@@ -304,20 +338,31 @@ static void iskn_parse_report(struct iskn_drvdata *drvdata, const u8 *data,
 			continue;
 		}
 
-		/* Only pen3d is subscribed, so it is the only length needed. */
-		if (frame[3] != ISKN_BLOCK_PEN3D ||
-		    offset + ISKN_PEN3D_FRAME_LEN > size) {
-			offset += sizeof(iskn_signature);
+		if (frame[3] == ISKN_BLOCK_PEN3D &&
+		    offset + ISKN_PEN3D_FRAME_LEN <= size) {
+			payload = frame + 4;
+			expected = get_unaligned_le16(payload +
+						      ISKN_PEN3D_PAYLOAD_LEN);
+			actual = iskn_crc16(payload, ISKN_PEN3D_PAYLOAD_LEN);
+			if (expected == actual)
+				iskn_report_pen3d(drvdata, payload);
+			offset += ISKN_PEN3D_FRAME_LEN;
 			continue;
 		}
 
-		payload = frame + 4;
-		expected = get_unaligned_le16(payload + ISKN_PEN3D_PAYLOAD_LEN);
-		actual = iskn_crc16(payload, ISKN_PEN3D_PAYLOAD_LEN);
-		if (expected == actual)
-			iskn_report_pen3d(drvdata, payload);
+		if (frame[3] == ISKN_BLOCK_BUTTONS &&
+		    offset + ISKN_BUTTON_FRAME_LEN <= size) {
+			payload = frame + 4;
+			expected = get_unaligned_le16(payload +
+						      ISKN_BUTTON_PAYLOAD_LEN);
+			actual = iskn_crc16(payload, ISKN_BUTTON_PAYLOAD_LEN);
+			if (expected == actual)
+				iskn_report_button(drvdata, payload[0]);
+			offset += ISKN_BUTTON_FRAME_LEN;
+			continue;
+		}
 
-		offset += ISKN_PEN3D_FRAME_LEN;
+		offset += sizeof(iskn_signature);
 	}
 }
 
@@ -440,6 +485,42 @@ static int iskn_register_input(struct iskn_drvdata *drvdata)
 	return input_register_device(input);
 }
 
+/*
+ * The case buttons go on their own input device rather than onto the pen.
+ * That is how tablet pads are conventionally exposed, and it keeps the pen
+ * device advertising only what a stylus actually has.
+ */
+static int iskn_register_pad(struct iskn_drvdata *drvdata)
+{
+	struct hid_device *hdev = drvdata->hdev;
+	struct input_dev *pad;
+	int i;
+
+	pad = devm_input_allocate_device(&hdev->dev);
+	if (!pad)
+		return -ENOMEM;
+
+	pad->name = "ISKN Repaper Pad";
+	pad->phys = hdev->phys;
+	pad->uniq = hdev->uniq;
+	pad->id.bustype = BUS_USB;
+	pad->id.vendor = hdev->vendor;
+	pad->id.product = hdev->product;
+	pad->id.version = hdev->version;
+	pad->dev.parent = &hdev->dev;
+	pad->open = iskn_input_open;
+	pad->close = iskn_input_close;
+
+	input_set_drvdata(pad, drvdata);
+
+	__set_bit(EV_KEY, pad->evbit);
+	for (i = 0; i < ISKN_BUTTON_COUNT; i++)
+		__set_bit(iskn_pad_keys[i], pad->keybit);
+
+	drvdata->pad = pad;
+	return input_register_device(pad);
+}
+
 static int iskn_probe(struct hid_device *hdev, const struct hid_device_id *id)
 {
 	struct iskn_drvdata *drvdata;
@@ -476,6 +557,12 @@ static int iskn_probe(struct hid_device *hdev, const struct hid_device_id *id)
 		goto err_stop;
 	}
 
+	ret = iskn_register_pad(drvdata);
+	if (ret) {
+		hid_err(hdev, "pad registration failed: %d\n", ret);
+		goto err_stop;
+	}
+
 	/* Reports only arrive while the transport is open. */
 	ret = hid_hw_open(hdev);
 	if (ret) {
@@ -483,14 +570,14 @@ static int iskn_probe(struct hid_device *hdev, const struct hid_device_id *id)
 		goto err_stop;
 	}
 
-	ret = iskn_subscribe(hdev, ISKN_AUTO_MASK(ISKN_BLOCK_PEN3D));
+	ret = iskn_subscribe(hdev, ISKN_SUBSCRIPTION);
 	if (ret) {
 		hid_err(hdev, "subscribe failed: %d\n", ret);
 		goto err_close;
 	}
 
-	hid_info(hdev, "pen stream subscribed over HID (mask 0x%04lx)\n",
-		 ISKN_AUTO_MASK(ISKN_BLOCK_PEN3D));
+	hid_info(hdev, "pen and buttons subscribed over HID (mask 0x%04lx)\n",
+		 ISKN_SUBSCRIPTION);
 	return 0;
 
 err_close:
@@ -516,7 +603,7 @@ static void iskn_remove(struct hid_device *hdev)
 static int iskn_resume(struct hid_device *hdev)
 {
 	/* The subscription does not survive a suspend. */
-	return iskn_subscribe(hdev, ISKN_AUTO_MASK(ISKN_BLOCK_PEN3D));
+	return iskn_subscribe(hdev, ISKN_SUBSCRIPTION);
 }
 #endif
 
