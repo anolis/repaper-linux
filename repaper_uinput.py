@@ -101,7 +101,9 @@ DEFAULT_RESOLUTION = 100
 # emits vectors well outside the unit circle, which is what makes this a
 # reliable proximity test as well as the basis for tilt.
 ROT_UNIT = 10000
-ROT_TOLERANCE = 1.05
+# Held pens reach a magnitude near 11200 at steep tilt while the idle noise
+# sits near 12800, so the cutoff has to sit between the two.
+ROT_TOLERANCE = 1.2
 TILT_LIMIT = 90
 
 # Drop the tool out of proximity after this long without a usable sample.

@@ -281,6 +281,21 @@ class PenPresenceTest(unittest.TestCase):
     def test_accepts_full_tilt_on_one_axis(self):
         self.assertTrue(repaper_uinput.pen_present(self.sample(10000, 0)))
 
+    def test_accepts_steep_tilt_with_both_components_large(self):
+        # Measured mid-stroke: tilt_y saturated at -90 while tilt_x was
+        # around 25 degrees, giving a magnitude near 11200.  A tighter
+        # cutoff rejected these and broke the stroke.
+        for rot_x, rot_y in ((5150, -10000), (4226, -10000), (2250, -10000)):
+            self.assertTrue(repaper_uinput.pen_present(self.sample(rot_x, rot_y)),
+                            f'({rot_x}, {rot_y}) is a real steep-tilt sample')
+
+    def test_cutoff_sits_between_steep_tilt_and_noise(self):
+        steep = 5150 ** 2 + 10000 ** 2
+        noise = 9007 ** 2 + 9054 ** 2
+        limit = (repaper_uinput.ROT_UNIT * repaper_uinput.ROT_TOLERANCE) ** 2
+        self.assertLess(steep, limit, 'real steep-tilt samples must pass')
+        self.assertGreater(noise, limit, 'idle noise must still be rejected')
+
 
 class TiltTest(unittest.TestCase):
     """rot components are a unit vector scaled by ROT_UNIT, so tilt is asin."""

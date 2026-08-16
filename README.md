@@ -237,18 +237,50 @@ dependencies, and no tablet required.
 
 ## Kernel module
 
-`hid-iskn.c` claims `2c87:0001` and marks the digitizer input
-`INPUT_PROP_DIRECT`.
+`hid-iskn.c` drives the tablet entirely over the vendor HID pipe. It
+subscribes to the pen3d block with `hid_hw_output_report()`, parses frames
+in `raw_event()`, and registers a single pen input device. No serial port
+and no userspace daemon are involved.
 
 ```sh
 make
 sudo insmod ./hid-iskn.ko
 ```
 
-Note that this only adjusts properties on the digitizer input, and that
-input never reports events — so the module currently has no practical
-effect. The useful direction is to reimplement it around the vendor HID
-pipe described above.
+If the tablet was already bound to `hid-generic`, hand it over:
+
+```sh
+DEV=$(basename /sys/bus/hid/devices/*:2C87:0001.*)
+echo -n "$DEV" | sudo tee /sys/bus/hid/drivers/hid-generic/unbind
+```
+
+The driver core rebinds it automatically. Confirm with:
+
+```sh
+dmesg | grep hid-iskn
+```
+
+which should report `pen stream subscribed over HID (mask 0x0008)`.
+
+It deliberately does not connect `HID_CONNECT_HIDINPUT`. Letting the
+descriptor build its own input devices only produces a silent digitizer and
+a mouse node that applications then try to use.
+
+### Module parameters
+
+| Parameter | Default | Purpose |
+| --- | --- | --- |
+| `swap_xy` | on | exchange the axes; the protocol reports them transposed |
+| `invert_y` | on | mirror Y; the protocol reports it upside down |
+| `invert_x` | off | mirror X |
+| `x_min`, `x_max`, `y_min`, `y_max` | measured | raw coordinate bounds |
+
+The orientation defaults describe the tablet held normally. Tilt follows its
+axis through a swap or inversion, so it stays consistent with motion.
+
+```sh
+sudo insmod ./hid-iskn.ko swap_xy=0 invert_y=0
+```
 
 ## Status
 
