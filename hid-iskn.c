@@ -66,19 +66,20 @@
 
 /* z pins to this while in contact and runs negative while hovering. */
 #define ISKN_Z_CONTACT			300
-#define ISKN_Z_MIN			-2000
+#define ISKN_Z_MIN			-5200
 
 #define ISKN_TILT_LIMIT			90
 
 /*
- * Coordinate bounds.  These are conservative defaults; the surface is
- * calibrated per unit, so they are exposed as module parameters rather
- * than baked in.
+ * Coordinate bounds measured from a full-surface sweep.  At the scale
+ * below they describe a 158 x 215 mm area, consistent with the A5 sheet
+ * the tablet is built around.  Surfaces vary between units, so these stay
+ * module parameters rather than fixed constants.
  */
-#define ISKN_X_MIN_DEFAULT		-9622
-#define ISKN_X_MAX_DEFAULT		9777
-#define ISKN_Y_MIN_DEFAULT		-10402
-#define ISKN_Y_MAX_DEFAULT		13018
+#define ISKN_X_MIN_DEFAULT		-7858
+#define ISKN_X_MAX_DEFAULT		7916
+#define ISKN_Y_MIN_DEFAULT		-10458
+#define ISKN_Y_MAX_DEFAULT		10995
 
 /* Raw units per millimetre: the vendor API scales raw values by 0.01. */
 #define ISKN_RESOLUTION			100

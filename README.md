@@ -54,6 +54,19 @@ pressing down for part of the run. Calibration refuses to save unless it
 sees enough contact samples, so a run where the pen never touched down
 cannot silently produce bad bounds.
 
+It also writes `~/.config/repaper/modprobe-hid-iskn.conf`, because the
+kernel driver cannot read the calibration file and takes the same bounds as
+module parameters instead:
+
+```sh
+sudo cp ~/.config/repaper/modprobe-hid-iskn.conf /etc/modprobe.d/hid-iskn.conf
+```
+
+A measured sweep is also what confirms the coordinate scale. On the unit
+this was developed against the surface came out as 158 x 215 mm at 100
+units per millimetre, against a real A5 sheet of 148 x 210 mm — the excess
+being the margin the magnet is still tracked across beyond the paper.
+
 Other options:
 
 ```sh
